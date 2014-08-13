@@ -14,7 +14,6 @@
 
 import argparse
 import logging
-import os
 import re
 import copy
 
@@ -25,20 +24,11 @@ from oauth2client.client import flow_from_clientsecrets
 from oauth2client.file import Storage
 from oauth2client.tools import run_flow
 
-constants = {
-    "DEFAULT_ZONE": 'us-central2-b',
-    "API_VERSION": 'v1',
-    "PROJECT_ID": 'de-novo-experiment',
-    "CLIENT_SECRETS": '/usr/local/google/home/smoitra/Downloads/client_secrets.json',
-    "OAUTH2_STORAGE": os.path.expanduser(
-        '~/.store/genomics_denovo_caller/oauth2.dat'),
-    "GCE_SCOPE": 'https://www.googleapis.com/auth/compute',
-    "SNAPSHOT_NAME": "denovo-snapshot"
-}
-constants["GCE_URL"] = 'https://www.googleapis.com/compute/{API_VERSION}/projects/'.format(**constants)
+from utils import confirm
+from utils import constants
 
 
-class gce_helper(object):
+class GCEHelper(object):
 
     """ Helper class for gce instances """
 
@@ -86,6 +76,10 @@ class gce_helper(object):
         self.gce_service = None
         self.auth_http = None
         self._build_service()
+        self.logger = logging.getLogger('gce_helper')
+        self.logger.setLevel(logging.INFO)
+        self.nameToIPMap = {}
+        self._updateNameToIPMap()
 
     def _build_service(self):
         logging.basicConfig(level=logging.WARNING)
@@ -112,7 +106,6 @@ class gce_helper(object):
 
         # Build the service
         self.gce_service = build('compute', constants["API_VERSION"])
-        project_url = '%s%s' % (constants["GCE_URL"], constants["PROJECT_ID"])
 
     def _list_instances(self):
         # List instances
@@ -126,13 +119,15 @@ class gce_helper(object):
             for instance in instances:
                 yield instance['name']
 
-    def list_denovo_instances(self) :
+    def gce_list_denovo_instances(self) :
         """ Lists all the denovo instances """
-        print_iterable(self._list_denovo_instances())
+        for inst in self._list_denovo_instances():
+            print(inst)
 
-    def list_instances(self):
+    def gce_list_instances(self):
         """ Lists all the instances in my GCE """
-        print_iterable(self._list_instances())
+        for inst in self._list_denovo_instances():
+            print(inst)
 
     def _list_denovo_instances(self):
         for instance in self._list_instances():
@@ -141,7 +136,7 @@ class gce_helper(object):
 
     def _create_instance(self, instance_json):
         """ Create a new instance from json """
-        print("Creating instance {:s}".format(instance_json["name"]))
+        self.logger.info("Creating instance {:s}".format(instance_json["name"]))
         request = self.gce_service.instances().insert(
             project=constants["PROJECT_ID"],
             body=instance_json,
@@ -152,7 +147,7 @@ class gce_helper(object):
 
     def _create_disk(self, disk_json):
         """ Create a new disk from json """
-        print("Creating disk {:s}".format(disk_json["name"]))
+        self.logger.info("Creating disk {:s}".format(disk_json["name"]))
         request = self.gce_service.disks().insert(
             project=constants["PROJECT_ID"],
             body=disk_json,
@@ -163,7 +158,7 @@ class gce_helper(object):
 
     def _create_instance_json(self, instance_name, device_name, num_cores):
         """ Creates a REST Json object to create a new instance"""
-        instance_json = copy.deepcopy(gce_helper.new_instance_json)
+        instance_json = copy.deepcopy(GCEHelper.new_instance_json)
         instance_constants = copy.deepcopy(constants)
         instance_constants["instance_name"] = instance_name
         instance_constants["device_name"] = device_name
@@ -183,7 +178,7 @@ class gce_helper(object):
 
     def _create_disk_json(self, device_name):
         """ Creates a REST Json object to create a new disk"""
-        disk_json = copy.deepcopy(gce_helper.new_disk_json)
+        disk_json = copy.deepcopy(GCEHelper.new_disk_json)
         disk_constants = copy.deepcopy(constants)
         disk_constants["device_name"] = device_name
 
@@ -191,14 +186,14 @@ class gce_helper(object):
 
         return disk_json
 
-    def create_denovo_instances(self, num_instances=1, num_cores=4):
+    def gce_create_denovo_instances(self, num_instances=1, num_cores=4):
         """ Create new denovo instances
 
         Keyword arguments:
         num_instances -- the number of instances (default 1)
         num_cores -- the number of cores per instance (default 4)
         """
-        print("Creating instances...")
+        self.logger.info("Creating instances...")
 
         num_instances = int(num_instances)
         new_instance_start_number = self._get_max_denovo_number() + 1
@@ -210,19 +205,19 @@ class gce_helper(object):
             self._create_instance(self._create_instance_json(
                 instance_name, device_name, num_cores))
 
-    def delete_all_denovo_instances(self):
+    def gce_delete_all_denovo_instances(self):
         """ Deletes all denovo instances """
 
-        print("Deleting all denovo instances...")
+        self.logger.info("Deleting all denovo instances...")
         if not confirm():
             return
         for instance_name in self._list_denovo_instances():
             self.delete_instance(instance_name)
 
-    def delete_instance(self, instance_name):
+    def gce_delete_instance(self, instance_name):
         """ Deletes a particular instance by name """
 
-        print("Deleting instance : {:s}...".format(instance_name))
+        self.logger.info("Deleting instance : {:s}...".format(instance_name))
         request = self.gce_service.instances().delete(
             project=constants["PROJECT_ID"],
             instance=instance_name,
@@ -261,41 +256,44 @@ class gce_helper(object):
         try:
             number = int(next(re.compile('\d+').finditer(
                 instance_name)).group())
-        except StopIteration as e:
+        except StopIteration:
             raise ValueError("Unknown instance type" + instance_name)
         return number
 
     def _get_max_denovo_number(self):
         """ Get the maximum number from the list of denovo instances"""
         try :
-            return max(gce_helper._get_instance_number(e) for e in
+            return max(GCEHelper._get_instance_number(e) for e in
                    self._list_denovo_instances())
         except ValueError:
             return 0
 
+    def _updateNameToIPMap(self):
+        self.logger.info("Updating name to ip map")
+        request = self.gce_service.instances(). list(
+            project=constants["PROJECT_ID"],
+            filter=None,
+            zone=constants["DEFAULT_ZONE"])
+        response = request.execute(http=self.auth_http)
+        self.nameToIPMap = {}
+        if response and 'items' in response:
+            instances = response['items']
+            for instance in instances:
+                if len(instance["networkInterfaces"]) > 1:
+                    raise ValueError("Only one IP per instance expected")
+                net_interface = instance["networkInterfaces"][0]
+                if len(net_interface["accessConfigs"]) > 1:
+                    raise ValueError("Only one IP per instance expected")
+                access_config = net_interface["accessConfigs"][0]
+                self.nameToIPMap[instance["name"]] = access_config["natIP"]
 
-def confirm(prompt="Are you sure?"):
-    """prompts for yes or no """
-
-    prompt = "{} (y|n): ".format(prompt)
-
-    while True:
-        ans = raw_input(prompt)
-        if not ans:
-            print prompt
-            continue
-        if ans in 'yY':
-            return True
-        if ans in 'nN':
-            return False
-        else:
-            print prompt
-            continue
-
-def print_iterable(iterable):
-    for e in iterable:
-        print e
+    def gce_list_name_ips(self):
+        """ List all the name to ip maps """
+        for  key, val in self.nameToIPMap.iteritems():
+            print("{0}: {1}".format(key, val))
 
 if __name__ == '__main__':
-    helper = gce_helper()
+    helper = GCEHelper()
     helper.list_denovo_instances()
+    helper._updateNameToIPMap()
+    print(helper.nameToIPMap)

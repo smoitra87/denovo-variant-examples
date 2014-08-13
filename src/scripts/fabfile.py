@@ -13,12 +13,36 @@
 
 
 import gce_helper
+import denovo_helper
 import inspect
+from fabric.api import *
+import utils
+import itertools
 
-# Add gce direct methods
-helper = gce_helper.gce_helper()
+# Instantiate helper objects
+helper = gce_helper.GCEHelper()
+denovo_helper = denovo_helper.DenovoHelper(helper)
+
+# Set up roles and environments
+env.user = utils.constants["GCE_USER"]
+env.roledefs = {
+    "denovo":
+    [ip for (name, ip) in helper.nameToIPMap.items() if 'denovo' in name],
+    "gce": [],
+}
+env.disable_known_hosts = True
+env.key_filename = utils.constants["GCE_PRIVATE_KEY"]
+
+# Add methods from helper classes to fabric namespace
 gce_methods = [tup for tup in
                inspect.getmembers(helper, predicate=inspect.ismethod)
                if not tup[0].startswith("_")]
+denovo_methods = [tup for tup in
+               inspect.getmembers(denovo_helper, predicate=inspect.ismethod)
+               if not tup[0].startswith("_")]
+
 for tup in gce_methods:
-    locals()[tup[0]] = tup[1]
+    locals()[tup[0]] = roles("gce")(tup[1])
+
+for tup in denovo_methods:
+    locals()[tup[0]] = roles("denovo")(tup[1])

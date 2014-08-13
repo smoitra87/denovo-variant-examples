@@ -3,10 +3,6 @@ denovo-variant-examples
 
 Examples of running denovo-variant-caller on GCE instances
 
-
-Creating GCE instances
-----------------------
-
 To get a list of all the options :
 ~~~
 $ fab -l -f src/scripts/fabfile.py
@@ -19,8 +15,8 @@ Available commands:
     list_instances               Lists all the instances in my GCE
 ~~~
 
-Examples
---------
+Creating GCE instances
+----------------------
 
 Create a new denovo instance :
     
@@ -67,6 +63,17 @@ Delete all denovo instances :
     Deleting instance : denovo-3...
 
     Done.
+
+Running Denovo Variant Caller
+-----------------------------
+
+Run stage 1 over chromosome1:
+
+Run stage 1 over chromsome2 ; 
+
+Run stage 2 : 
+
+
 
 
 
