@@ -28,6 +28,12 @@ class DenovoHelper(object):
         with cd("denovo-variant-caller"):
             run("git pull origin master")
 
+    @with_settings(shell_escape=False)
+    def denovo_any_cmd(self, cmd):
+        """ Run any command on denovo instances """
+        for line in run(cmd).splitlines():
+            print("#"+line)
+
     def denovo_push_client_secrets(self):
         """ Push denovo client_secrets file to all hosts """
         local()
@@ -37,6 +43,14 @@ class DenovoHelper(object):
         with cd("denovo-variant-caller"):
             run("mvn package")
 
+    @with_settings(shell_escape=False)
+    def denovo_exec_bg_cmd(self, cmd):
+        cmd = "(nohup " + cmd + " 2>my.err 1>my.out </dev/null & ); " +\
+            " ps ax --sort=etime " +\
+            "| grep -F \'" + cmd + "\' " +\
+            "| grep -v -F 'grep' | head -n 1 | tr -s \' \'"
+        for line in run(cmd).splitlines():
+            print(line.split()[0])
 
 if __name__ == '__main__':
     helper = gce_helper.GCEHelper()
