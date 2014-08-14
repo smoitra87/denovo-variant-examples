@@ -10,7 +10,8 @@ constants = {
     "OAUTH2_STORAGE": os.path.expanduser(
         '~/.store/genomics_denovo_caller/oauth2.dat'),
     "GCE_SCOPE": 'https://www.googleapis.com/auth/compute',
-    "SNAPSHOT_NAME": "denovo-snapshot"
+    "SNAPSHOT_NAME": "denovo-snapshot",
+    "JOB_TABLE": os.path.expanduser("~/.denovo_experiments/jobs.tbl")
 }
 constants["GCE_URL"] = 'https://www.googleapis.com/compute/{API_VERSION}/projects/'.format(**constants)
 

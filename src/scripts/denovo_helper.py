@@ -14,6 +14,11 @@
 import gce_helper
 from fabric.api import *
 from contextlib import nested
+import json
+import os
+import utils
+import sqlite3 as lite
+import datetime
 
 class DenovoHelper(object):
     """ Helper for running commands on denovo instances
@@ -52,6 +57,127 @@ class DenovoHelper(object):
         for line in run(cmd).splitlines():
             print(line.split()[0])
 
+    @with_settings(shell_escape=False)
+    def denovo_run_from_cli(self, denovo_cli):
+        with cd("denovo-variant-caller"):
+            self.denovo_exec_bg_cmd(denovo_cli)
+
+    @with_settings(shell_escape=False)
+    def denovo_run_from_jsonf(self, f):
+        with open(f) as fin :
+            json_string = fin.read()
+        builder = DenovoBuilder()
+        denovo_cli = builder.from_json(json_string).to_string()
+        self.denovo_run_from_cli(denovo_cli)
+
+class DenovoBuilder(object):
+    """ Builder object for denovo commandline options """
+
+    arglist = ["stage_id"]
+    optlist = ["chromosome", "client_secrets_filename", "debug_level",
+               "denovo_mut_rate", "inference_method", "input_file",
+               "job_name", "lrt_threshold", "num_threads", "output_file",
+               "seq_err_rate"]
+
+    def __init__(self):
+        self.opts = {}
+        from argparse import ArgumentParser
+        self.parser = ArgumentParser(description="Parser for strings")
+
+        for arg in DenovoBuilder.arglist:
+            self.parser.add_argument(arg, type=str)
+        for opt in DenovoBuilder.optlist:
+            self.parser.add_argument("--"+opt, type=str)
+
+    def from_string(self, s):
+        """ Convert to string"""
+        java_string = "java -jar target/denovo-variant-caller-0.1.jar "
+        if s.startswith(java_string):
+            s = s[len(java_string):]
+
+        parsed = self.parser.parse_args(s.split())
+        self.opts = parsed.__dict__
+        return self
+
+    def from_json(self, j):
+        self.opts = json.loads(j)
+        return self
+
+    def to_json(self):
+        return json.dumps(self.opts)
+
+    def to_string(self):
+        s = "java -jar target/denovo-variant-caller-0.1.jar " +\
+            " ".join(v for k,v in self.opts.items() \
+                     if k in DenovoBuilder.arglist) + " " +\
+            " ".join("--"+k+" "+v for k,v in self.opts.items() \
+                     if k not in DenovoBuilder.arglist and v is not None)
+        return s
+
+    def update_from_dict(self, d):
+        self.opts.update(d)
+
+class JobTable:
+    """ MySQL table containing all the jobs and the job ids """
+    def __enter__(self):
+        self.con = lite.connect(utils.constants["JOB_TABLE"])
+        self.cur = self.con.cursor()
+        self._create_table()
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.con.close()
+
+    def insert_record(self, record):
+        """ Insert a record into the table """
+        cmd = "insert into jobs(job_id, pid, ts, mach, stat, cmd) values"+\
+            "(?, ?, ?, ?, ?, ?)"
+        self.cur.execute(cmd, record)
+        self.con.commit()
+
+    def get_max_jobid(self):
+        """ Return the max job id stored in the table """
+        cmd = "select max(job_id) from jobs"
+        self.cur.execute(cmd)
+        max_id = self.cur.fetchone()
+        return max_id[0]
+
+    def display_all(self):
+        """ Display all the records """
+        cmd = "select * from jobs"
+        self.cur.execute(cmd)
+        for line in self.cur.fetchall():
+            print(line)
+
+    def _create_table(self):
+        """ Create a job table """
+        cmd = "create table if not exists jobs(job_id int, pid int, "+\
+            "ts timestamp, mach text, stat text, cmd text)"
+        self.cur.execute(cmd)
+
+    def _delete_table(self):
+        """Delete the job table"""
+        cmd = "drop table jobs"
+        self.cur.execute()
+
 if __name__ == '__main__':
     helper = gce_helper.GCEHelper()
-    denovo_helper = DenovoHelper()
+    denovo_helper = DenovoHelper(helper)
+    builder = DenovoBuilder()
+    print(builder.from_string(
+        "java -jar target/denovo-variant-caller-0.1.jar stage1 "+\
+        "--client_secrets_filename ~/Downloads/client_secrets.json "+\
+        "--job_name myStage1Job "+\
+        "--output_file stage1.calls "+\
+        "--debug_level 1").to_json());
+    print(builder.from_string(builder.to_string()).to_string())
+
+    with JobTable() as tbl:
+        now = datetime.datetime.now()
+        max_job_id = tbl.get_max_jobid()
+        new_job_id = 1 if max_job_id is None else max_job_id+1
+        record = (new_job_id, now, 1, "denovo-1", "submitted", "ls -la")
+
+        tbl.insert_record(record)
+        tbl.display_all()
+
