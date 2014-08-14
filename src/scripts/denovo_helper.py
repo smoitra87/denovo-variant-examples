@@ -19,6 +19,9 @@ import os
 import utils
 import sqlite3 as lite
 import datetime
+from operator import itemgetter
+import itertools
+from collections import defaultdict
 
 class DenovoHelper(object):
     """ Helper for running commands on denovo instances
@@ -27,6 +30,10 @@ class DenovoHelper(object):
     """
     def __init__(self, helper):
         self.gce_helper = helper
+        self.jobs = {}
+        with JobTable() as tbl:
+            for stat in ("submitted", "running"):
+                self.jobs[stat] = tbl.get_jobs_by_status(stat)
 
     def denovo_update_from_github(self):
         """ Update denovo-variant-caller on all hosts"""
@@ -49,26 +56,55 @@ class DenovoHelper(object):
             run("mvn package")
 
     @with_settings(shell_escape=False)
-    def denovo_exec_bg_cmd(self, cmd):
-        cmd = "(nohup " + cmd + " 2>my.err 1>my.out </dev/null & ); " +\
+    def denovo_exec_bg_cmd(self, \
+            cmd, err="my.err", out="my.out", inp="/dev/null"):
+        """ Run background job with no hup"""
+        cmd = "(nohup " + cmd + " 2>%s 1>%s <%s & ); "%(err, out, inp) +\
             " ps ax --sort=etime " +\
             "| grep -F \'" + cmd + "\' " +\
             "| grep -v -F 'grep' | head -n 1 | tr -s \' \'"
         for line in run(cmd).splitlines():
-            print(line.split()[0])
+            return line.split()[0]
 
     @with_settings(shell_escape=False)
     def denovo_run_from_cli(self, denovo_cli):
+        """ Run java program using command line params """
         with cd("denovo-variant-caller"):
-            self.denovo_exec_bg_cmd(denovo_cli)
+            return self.denovo_exec_bg_cmd(denovo_cli)
 
     @with_settings(shell_escape=False)
     def denovo_run_from_jsonf(self, f):
+        """ Run java program from params stored in json """
         with open(f) as fin :
             json_string = fin.read()
         builder = DenovoBuilder()
         denovo_cli = builder.from_json(json_string).to_string()
-        self.denovo_run_from_cli(denovo_cli)
+        return self.denovo_run_from_cli(denovo_cli)
+
+    def update_jobs_table(self):
+        """ Update the jobs table """
+        hostname = self.gce_helper.IPtoNameMap[env.host]
+        updates = defaultdict(list)
+
+        for job in itertools.chain(self.jobs["submitted"],self.jobs["running"]):
+            db_hostname, db_pid = job[3], job[1]
+            if db_hostname != hostname :
+                continue
+            if not self._check_pid_exists(db_pid):
+                updates["finished"].append(job[0])
+            else:
+                updates["running"].append(job[0])
+
+        updates = dict(updates)
+        with JobTable() as tbl:
+            for stat in updates:
+                tbl.update_stat(updates[stat], stat)
+            tbl.display_all()
+
+
+    def _check_pid_exists(self, pid):
+        """ Check that a pid exists """
+        return int(run("[ -e /proc/%d ] && echo 1 || echo 0"%pid))
 
 class DenovoBuilder(object):
     """ Builder object for denovo commandline options """
@@ -135,6 +171,12 @@ class JobTable:
         self.cur.execute(cmd, record)
         self.con.commit()
 
+    def get_jobs_by_status(self, status, all=False):
+        """ Get jobs according to status - submitted/running/finished """
+        cmd = 'select * from jobs where stat="%s"'%status
+        self.cur.execute(cmd)
+        return self.cur.fetchall()
+
     def get_max_jobid(self):
         """ Return the max job id stored in the table """
         cmd = "select max(job_id) from jobs"
@@ -160,6 +202,14 @@ class JobTable:
         cmd = "drop table jobs"
         self.cur.execute()
 
+    def update_stat(self, jobids, stat):
+        """ updates values """
+        cmd = 'update jobs set stat="%s" '%stat + 'where job_id in ('+\
+            ','.join(map(str,jobids)) +')'
+        print cmd
+        self.cur.execute(cmd)
+        self.con.commit()
+
 if __name__ == '__main__':
     helper = gce_helper.GCEHelper()
     denovo_helper = DenovoHelper(helper)
@@ -176,8 +226,10 @@ if __name__ == '__main__':
         now = datetime.datetime.now()
         max_job_id = tbl.get_max_jobid()
         new_job_id = 1 if max_job_id is None else max_job_id+1
-        record = (new_job_id, now, 1, "denovo-1", "submitted", "ls -la")
-
+        record = (new_job_id, 5300, now, "denovo-1", "submitted", "ls -la")
         tbl.insert_record(record)
-        tbl.display_all()
+        record = (new_job_id+1, 5301, now, "denovo-1", "submitted", "ls -la")
+        tbl.insert_record(record)
+        for rec in tbl.get_jobs_by_status("submitted"):
+            print rec
 

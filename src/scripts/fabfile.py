@@ -46,3 +46,4 @@ for tup in gce_methods:
 
 for tup in denovo_methods:
     locals()[tup[0]] = roles("denovo")(tup[1])
+

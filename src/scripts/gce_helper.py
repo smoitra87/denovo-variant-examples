@@ -79,6 +79,7 @@ class GCEHelper(object):
         self.logger = logging.getLogger('gce_helper')
         self.logger.setLevel(logging.INFO)
         self.nameToIPMap = {}
+        self.IPtoNameMap = {}
         self._updateNameToIPMap()
 
     def _build_service(self):
@@ -275,7 +276,7 @@ class GCEHelper(object):
             filter=None,
             zone=constants["DEFAULT_ZONE"])
         response = request.execute(http=self.auth_http)
-        self.nameToIPMap = {}
+        self.nameToIPMap, self.IPtoNameMap = {},{}
         if response and 'items' in response:
             instances = response['items']
             for instance in instances:
@@ -286,6 +287,7 @@ class GCEHelper(object):
                     raise ValueError("Only one IP per instance expected")
                 access_config = net_interface["accessConfigs"][0]
                 self.nameToIPMap[instance["name"]] = access_config["natIP"]
+                self.IPtoNameMap[access_config["natIP"]] = instance["name"]
 
     def gce_list_name_ips(self):
         """ List all the name to ip maps """
