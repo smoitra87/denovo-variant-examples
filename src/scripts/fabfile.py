@@ -28,7 +28,10 @@ env.user = utils.constants["GCE_USER"]
 env.roledefs = {
     "denovo":
     [ip for (name, ip) in helper.nameToIPMap.items() if 'denovo' in name],
+    "single":
+    [ip for (name, ip) in helper.nameToIPMap.items() if name == 'denovo-1'],
     "gce": [],
+    "table": []
 }
 env.disable_known_hosts = True
 env.key_filename = utils.constants["GCE_PRIVATE_KEY"]
@@ -44,6 +47,11 @@ denovo_methods = [tup for tup in
 for tup in gce_methods:
     locals()[tup[0]] = roles("gce")(tup[1])
 
-for tup in denovo_methods:
+for tup in (tup for tup in denovo_methods if tup[0].startswith("denovo")):
     locals()[tup[0]] = roles("denovo")(tup[1])
 
+for tup in (tup for tup in denovo_methods if tup[0].startswith("single")):
+    locals()[tup[0]] = roles("single")(tup[1])
+
+for tup in (tup for tup in denovo_methods if tup[0].startswith("table")):
+    locals()[tup[0]] = roles("table")(tup[1])
